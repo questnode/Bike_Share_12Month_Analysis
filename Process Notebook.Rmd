@@ -1,0 +1,302 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+
+### Load Libraries
+```{r}
+library(geosphere)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+```
+## Setting folder and file locations for initial data loading.
+
+```{r}
+raw_csv_folder <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\rawdata" #File path to the folder with the *.csv files
+merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210vr0.1.csv" 
+```
+
+
+### Preloading data step #1: Process all raw csv data in a folder into one single csv file (This step can be skipped if merged_trips csv already exists and dataset is being loaded from there)
+
+```{r}
+file_path_list <- fs::dir_ls(raw_csv_folder)
+file_name_list <- list.files(raw_csv_folder)
+
+merged_trips = data.frame()
+
+#for initial data exploration, read only first 1000 lines in each csv using nrows=1000
+for (i in seq_along(file_name_list)) {
+  my_content <- read.csv(file = file_path_list[[i]], nrows=20000)
+  # my_content <- read.csv(file = file_path_list[[i]])
+  
+  df <- data.frame(my_content)
+
+  merged_trips <- rbind(merged_trips, df)
+}
+
+
+
+```
+
+
+### Preloading data step #2: Write the merged data to a new csv file (This step can be skipped if merged_trips csv already exists and dataset is being loaded from there)
+```{r}
+write.table(merged_trips, file = merged_file, sep = ",",
+  append = FALSE, quote = FALSE,
+  col.names = TRUE, row.names = FALSE)
+```
+
+
+
+### Preloading data setp #3: Read pre-merged csv into dataframe (This step can be skipped if step #1 of preloading is ran, and merged_trips dataframe is already populated)
+
+```{r}
+
+merged_trips = read.csv(merged_file)
+```
+
+# Cleaning and Transforming
+After iniitial exploratory exercise, there are a few tasks to be done before putting the data into analysis models.
+
+## Filling in missing Station IDs
+### Create a list of stations along with their names, IDs, and geos.
+Earlier data did not contail station IDs, but has geo-coordinate that may be used reference to later data
+
+First we want to generate an index of all unique station IDs with their geo-coordinates
+
+```{r}
+# Create a vector with all unique IDs found in the start_station_id and end_station_id columns
+all_station_ids = sort(unique(unique(merged_trips$start_station_id), unique(merged_trips$end_station_id)))
+# Remove blank ID
+all_station_ids = all_station_ids[all_station_ids != ""]
+
+station_list <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(station_list) <- c("id","name","lng","lat")
+
+for (i in seq_along(all_station_ids)) {
+
+  station_info <- (merged_trips %>% filter(start_station_id == all_station_ids[i]))[c("start_lng","start_lat","start_station_name")]
+  
+  station_list[nrow(station_list) + 1,] <- c(
+    all_station_ids[i],
+    names(sort(table(station_info$start_station_name),decreasing=T)[1]),
+    names(sort(table(station_info$start_lng),decreasing=T)[1]),
+    names(sort(table(station_info$start_lat),decreasing=T)[1])
+  )
+  
+}
+
+station_list[,c("lng","lat")] <- sapply(station_list[,c("lng","lat")], as.numeric)
+
+```
+
+### Mark missing start and/or end geo-coordinates
+Some records are missing start and/or end geo-coordinates.  Their station id and name shall be marked as Missing_Start_ID/Missing_End_ID and Missing_Start_Name/Missing_End_Name
+The values in the g
+
+```{r}
+
+merged_trips[is.na(merged_trips)] <- ""
+
+merged_trips[,c("start_lat","start_lng","end_lat","end_lng")] <- sapply(merged_trips[,c("start_lat","start_lng","end_lat","end_lng")], as.numeric)
+
+for (i in seq_len(nrow(merged_trips))) {
+
+  if (is.na(merged_trips[i,"start_lat"]) | is.na(merged_trips[i,"start_lng"])) {
+    merged_trips[i,"start_station_id"] <- "Missing_Start_ID"
+    merged_trips[i,"start_station_name"] <- "Missing_Start_Name"
+  }
+}
+
+for (i in seq_len(nrow(merged_trips))) {
+
+  if (is.na(merged_trips[i,"end_lat"]) | is.na(merged_trips[i,"end_lng"])) {
+    merged_trips[i,"end_station_id"] <- "Missing_End_ID"
+    merged_trips[i,"end_station_name"] <- "Missing_End_Name"
+  }
+}
+
+
+```
+
+
+### Reference missing station data with the station info generated
+Now that we have a full list of stations, we can use it to look up the missing data points in merged_trips.  This can be done in the following steps
+
+1. Seek along each row in mergerd_trips
+
+2. Check to see if one or more of these cells is empty: start_station_name, start_station_id, end_station_name, end_station_id
+
+3. If #2 is true, then the start/end lng/lat columns will be used. eg.
+
+    If start_station_name or start_station_id is missing, then use start_lat and start_lng
+  
+    If end_station_name or end_station_id is missing, then use end_lat and end_lng
+  
+4. lat and lng values from merged_trips will be compared against all lat and lng values in station_list to determine which station is the missing value.  Match is determined when the total difference of lat & lng from merged trips and lat & lng from stastion_list is the smallest out of the entire list.
+
+5. For precaution, the distance between the original geo-coordinates and the matched station will be recorded to see if there is a large deviation
+
+
+```{r}
+
+
+
+station_by_geo <- function(lat, lng) {
+  # create a dictionary with two keys, one is the station ID, and the other is station name
+
+  station_found <- c("id" = "", "name" = "")
+  geo_diff <- 9999
+  current_geo_diff <- 0
+  #geo_diff_record = list()
+
+  for (i in seq_len(nrow(station_list))) {
+    # print(lat)
+    # print(as.numeric(station_list[i,"lat"]))
+    # current_geo_diff <- (abs(as.numeric(lat) - as.numeric(station_list[i,"lat"])) + abs(as.numeric(lng) - as.numeric(station_list[i,"lng"])))
+    current_geo_diff <- (abs(lat - station_list[i,"lat"]) + abs(lng - station_list[i,"lng"]))
+    #geo_diff_record <- append(geo_diff_record, current_geo_diff)
+    #print(current_geo_diff)
+    if (current_geo_diff < geo_diff) {
+      geo_diff <- current_geo_diff
+      station_found["id"] <- station_list[i,"id"]
+      station_found["name"] <- station_list[i,"name"]
+    }
+  }
+
+  return(station_found)
+
+}
+
+for (i in seq_len(nrow(merged_trips))) {
+
+  if (i %% 100 == 0) {
+    print(paste("Start Station Record: ", i ,". At ", Sys.time(), sep=""))
+  }
+
+  if (merged_trips[i,"start_station_name"] == "" | merged_trips[i,"start_station_id"] == "") {
+    station_found <- station_by_geo(merged_trips[i,"start_lat"],merged_trips[i,"start_lng"])
+    merged_trips[i,"start_station_id"] <- station_found["id"]
+    merged_trips[i,"start_station_name"] <- station_found["name"]
+  }
+}
+
+for (i in seq_len(nrow(merged_trips))) {
+
+  if (i %% 100 == 0) {
+    print(paste("End Station Record: ", i ,". At ", Sys.time(), sep=""))
+    paste
+  }
+
+  if (merged_trips[i,"end_station_name"] == "" | merged_trips[i,"end_station_id"] == "") {
+    station_found <- station_by_geo(merged_trips[i,"end_lat"],merged_trips[i,"end_lng"])
+    merged_trips[i,"end_station_id"] <- station_found["id"]
+    merged_trips[i,"end_station_name"] <- station_found["name"]
+  }
+}
+
+
+
+# ---### OLD CODES BEGIN ###----
+
+# print(seq_len(nrow(merged_trips)))
+
+# empty_count = 0
+# 
+# for (i in seq_len(nrow(merged_trips))) {
+#   print(i)
+#   station_checker <- merged_trips[i,c("start_station_name", "start_station_id", "end_station_name", "end_station_id")]
+#   print(station_checker)
+#   if (is.null(station_checker$start_staiton_name) | is.null(station_checker$start_staiton_id) | is.null(station_checker$end_staiton_name) | is.null(station_checker$end_staiton_id)) {
+#     #print("good")
+#     
+#     empty_count = empty_count +1
+#     
+#   }
+# }
+
+# print(empty_count)
+# 
+# station_checker <- merged_trips[6,c("start_station_name", "start_station_id", "end_station_name", "end_station_id")]
+# if (is.null(station_checker$start_station_name) | is.null(station_checker$start_station_id) | is.null(station_checker$end_station_name) | is.null(station_checker$end_station_id)) {
+#   print("Data Missing")
+# 
+# } else {
+#   print("Data Complete")
+# }
+# 
+# print(is.null(station_checker$start_station_name))
+
+# print(station_checker[c("start_station_name")])
+# 
+# 
+# if (station_checker$start_staiton_name == "" ) {
+#   print("Missing")
+# }
+
+
+#tester <- merged_trips[merged_trips$end_lat == "",]
+
+
+
+
+
+# tester <- merged_trips[merged_trips$start_lat == "" | merged_trips$start_lng == "" | merged_trips$end_lat == "" | merged_trips$_lng == "",]
+# ---### OLD CODES END ###----
+
+
+
+```
+
+
+
+### Add a column to calculate linear distance between starting and ending stations
+
+```{r}
+merged_trips <- merged_trips%>%dplyr::mutate(linear_distance=geosphere::distHaversine(cbind(start_lng,start_lat), cbind(end_lng,end_lat)))
+```
+
+
+### Testing different models
+```{r}
+summary(merged_trips)
+glimpse(merged_trips)
+
+ggplot(data = merged_trips) +
+  geom_bar(mapping = aes(x = rideable_type, fill=member_casual))
+```
+
+```{r}
+#table(merged_trips)
+rle(sort(merged_trips$member_casual))
+
+```
+
+After initial exploration, data plan could be:
+1. casual vs member at each station
+2. casual vs member in ride distance 
+3. casual vs member in ride duration
+4. sort stations in most busy to least busy
+5. 
+
+Data fixes:
+1. Fill in station names and IDs based on geo-coordinates
+2. What is docked_bike rideable_type?
+
