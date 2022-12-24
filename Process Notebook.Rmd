@@ -122,25 +122,6 @@ merged_trips[,c("end_station_name","end_station_id")][is.na(merged_trips$end_lat
 merged_trips[,c("start_station_name","start_station_id")][is.na(merged_trips$start_lat) | is.na(merged_trips$start_lng),] <- "Missing Data & Geo"
 
 
-
-# 
-# for (i in seq_len(nrow(merged_trips))) {
-# 
-#   if (is.na(merged_trips[i,"start_lat"]) | is.na(merged_trips[i,"start_lng"])) {
-#     merged_trips[i,"start_station_id"] <- "Missing_Start_ID"
-#     merged_trips[i,"start_station_name"] <- "Missing_Start_Name"
-#   }
-# }
-# 
-# for (i in seq_len(nrow(merged_trips))) {
-# 
-#   if (is.na(merged_trips[i,"end_lat"]) | is.na(merged_trips[i,"end_lng"])) {
-#     merged_trips[i,"end_station_id"] <- "Missing_End_ID"
-#     merged_trips[i,"end_station_name"] <- "Missing_End_Name"
-#   }
-# }
-
-
 ```
 
 
@@ -167,11 +148,6 @@ station_by_geo <- function(check_lat, check_lng) {
   # create a dictionary with two keys, one is the station ID, and the other is station name
 
   station_found <- c("id" = "", "name" = "")
-  # geo_diff <- 9999
-  # current_geo_diff <- 0
-  #geo_diff_record = list()
-  # check_lat = 41.78
-  # check_lng = -87.69
   
   compare_list <- data.frame(station_list)
   compare_list <- compare_list%>%dplyr::mutate(Geo_Diff=NA)
@@ -182,32 +158,12 @@ station_by_geo <- function(check_lat, check_lng) {
   station_found["id"] <- compare_list[row_num,"id"]
   station_found["name"] <- compare_list[row_num,"name"]
 
-  #which.min(abs(array - value))
-
-  # for (i in seq_len(nrow(station_list))) {
-
-    #which.min(abs(array - value))
-    
-    
-    # current_geo_diff <- (abs(lat - station_list[i,"lat"]) + abs(lng - station_list[i,"lng"]))
-    # 
-    # if (current_geo_diff < geo_diff) {
-    #   geo_diff <- current_geo_diff
-    #   station_found["id"] <- station_list[i,"id"]
-    #   station_found["name"] <- station_list[i,"name"]
-    # }
-  # }
-
   return(station_found)
 
 }
 ```
 
-
-```{r}
-# merged_trips[,c("start_station_name")][merged_trips$start_station_name == ""] <- station_by_geo(merged_trips[,c("start_lat")][merged_trips$start_station_name == ""],merged_trips[,c("start_lng")][merged_trips$start_station_name == ""])["name"]
-```
-
+## Run search for blank station names and IDs by maching geo-coordinates
 
 ```{r}
 # === Start Stations ===
@@ -227,11 +183,8 @@ for (i in 1:nrow(merged_trips)) {
     print(paste("Start Station Record # ", i ,". @ ", Sys.time(), ". Case found: ", case, sep=""))
   }
 
-  # if (merged_trips[i,"start_station_name"] == "" | merged_trips[i,"start_station_id"] == "") {
   if (condition[i]) {
     station_found <- station_by_geo(merged_trips[i,"start_lat"],merged_trips[i,"start_lng"])
-    # merged_trips[i,"start_station_id"] <- station_found["id"]
-    # merged_trips[i,"start_station_name"] <- station_found["name"]
     start_station_ids_found[i] <- station_found["id"]
     start_station_names_found[i] <- station_found["name"]
     
@@ -249,7 +202,6 @@ condition <- (merged_trips$end_station_name == "" | merged_trips$end_station_id 
 
 case <- 0
 
-# for (i in seq_len(nrow(merged_trips))) {
 for (i in seq_len(nrow(merged_trips))) {
   
   if (i %% 10000 == 0 | i == 1) {
@@ -257,11 +209,9 @@ for (i in seq_len(nrow(merged_trips))) {
     paste
   }
 
-  # if (merged_trips[i,"end_station_name"] == "" | merged_trips[i,"end_station_id"] == "") {
   if (condition[i]) {
     station_found <- station_by_geo(merged_trips[i,"end_lat"],merged_trips[i,"end_lng"])
-    # merged_trips[i,"end_station_id"] <- station_found["id"]
-    # merged_trips[i,"end_station_name"] <- station_found["name"]
+
     end_station_ids_found[i] <- station_found["id"]
     end_station_names_found[i] <- station_found["name"]
     
@@ -271,87 +221,6 @@ for (i in seq_len(nrow(merged_trips))) {
 
 merged_trips$end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
 merged_trips$end_station_name <- ifelse(!merged_trips$end_station_name == "", merged_trips$end_station_name, end_station_names_found)
-
-
-# ---### OLD CODES BEGIN ###----
-
-# print(seq_len(nrow(merged_trips)))
-
-# empty_count = 0
-# 
-# for (i in seq_len(nrow(merged_trips))) {
-#   print(i)
-#   station_checker <- merged_trips[i,c("start_station_name", "start_station_id", "end_station_name", "end_station_id")]
-#   print(station_checker)
-#   if (is.null(station_checker$start_staiton_name) | is.null(station_checker$start_staiton_id) | is.null(station_checker$end_staiton_name) | is.null(station_checker$end_staiton_id)) {
-#     #print("good")
-#     
-#     empty_count = empty_count +1
-#     
-#   }
-# }
-
-# print(empty_count)
-# 
-# station_checker <- merged_trips[6,c("start_station_name", "start_station_id", "end_station_name", "end_station_id")]
-# if (is.null(station_checker$start_station_name) | is.null(station_checker$start_station_id) | is.null(station_checker$end_station_name) | is.null(station_checker$end_station_id)) {
-#   print("Data Missing")
-# 
-# } else {
-#   print("Data Complete")
-# }
-# 
-# print(is.null(station_checker$start_station_name))
-
-# print(station_checker[c("start_station_name")])
-# 
-# 
-# if (station_checker$start_staiton_name == "" ) {
-#   print("Missing")
-# }
-
-
-#tester <- merged_trips[merged_trips$end_lat == "",]
-
-
-
-
-
-# tester <- merged_trips[merged_trips$start_lat == "" | merged_trips$start_lng == "" | merged_trips$end_lat == "" | merged_trips$_lng == "",]
-
-
-# station_by_geo <- function(lat, lng) {
-#   # create a dictionary with two keys, one is the station ID, and the other is station name
-# 
-#   station_found <- c("id" = "", "name" = "")
-#   geo_diff <- 9999
-#   current_geo_diff <- 0
-#   #geo_diff_record = list()
-# 
-#   for (i in seq_len(nrow(station_list))) {
-#     # print(lat)
-#     # print(as.numeric(station_list[i,"lat"]))
-#     # current_geo_diff <- (abs(as.numeric(lat) - as.numeric(station_list[i,"lat"])) + abs(as.numeric(lng) - as.numeric(station_list[i,"lng"])))
-#     current_geo_diff <- (abs(lat - station_list[i,"lat"]) + abs(lng - station_list[i,"lng"]))
-#     #geo_diff_record <- append(geo_diff_record, current_geo_diff)
-#     #print(current_geo_diff)
-#     if (current_geo_diff < geo_diff) {
-#       geo_diff <- current_geo_diff
-#       station_found["id"] <- station_list[i,"id"]
-#       station_found["name"] <- station_list[i,"name"]
-#     }
-#   }
-# 
-#   return(station_found)
-# 
-# }
-
-
-# test3 <- merged_trips[,c("ride_id","start_station_name")][merged_trips$start_station_name == "",]
-
-# ---### OLD CODES END ###----
-
-
 
 ```
 
@@ -373,11 +242,7 @@ ggplot(data = merged_trips) +
   geom_bar(mapping = aes(x = rideable_type, fill=member_casual))
 ```
 
-```{r}
-#table(merged_trips)
-rle(sort(merged_trips$member_casual))
 
-```
 
 After initial exploration, data plan could be:
 1. casual vs member at each station
