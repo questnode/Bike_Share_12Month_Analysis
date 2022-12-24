@@ -29,7 +29,7 @@ library(tidyverse)
 
 ```{r}
 raw_csv_folder <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\rawdata" #File path to the folder with the *.csv files
-merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210vr0.1.csv" 
+merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210FULLvr0.2(IDs Names Geo Filled).csv" 
 ```
 
 
@@ -210,6 +210,7 @@ station_by_geo <- function(check_lat, check_lng) {
 
 
 ```{r}
+# === Start Stations ===
 station_ids_found = numeric (nrow(merged_trips))
 station_names_found = numeric (nrow(merged_trips))
 
@@ -222,7 +223,7 @@ case <- 0
 
 for (i in 1:nrow(merged_trips)) {
 
-  if (i %% 1000 == 0) {
+  if (i %% 10000 == 0 | i == 1) {
     print(paste("Start Station Record # ", i ,". @ ", Sys.time(), ". Case found: ", case, sep=""))
   }
 
@@ -246,10 +247,13 @@ end_station_names_found = numeric (nrow(merged_trips))
 
 condition <- (merged_trips$end_station_name == "" | merged_trips$end_station_id == "")
 
-for (i in seq_len(nrow(merged_trips))) {
+case <- 0
 
-  if (i %% 1000 == 0) {
-    print(paste("End Station Record: ", i ,". At ", Sys.time(), sep=""))
+# for (i in seq_len(nrow(merged_trips))) {
+for (i in seq_len(nrow(merged_trips))) {
+  
+  if (i %% 10000 == 0 | i == 1) {
+    print(paste("End Station Record # ", i ,". At ", Sys.time(), ". Case found: ", case, sep=""))
     paste
   }
 
@@ -260,6 +264,8 @@ for (i in seq_len(nrow(merged_trips))) {
     # merged_trips[i,"end_station_name"] <- station_found["name"]
     end_station_ids_found[i] <- station_found["id"]
     end_station_names_found[i] <- station_found["name"]
+    
+    case <- case + 1
   }
 }
 

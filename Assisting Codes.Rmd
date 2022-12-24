@@ -8,20 +8,22 @@ date: "2022-12-24"
 ```{r}
 
 
-merged_trips <- subset(merged_trips, select = -c(new_start_station_id))
+merged_trips <- subset(merged_trips, select = -c(start_station_id_copy))
+
 ```
 
 
 ## Create a test dataset
 
 ```{r}
-tester <- merged_trips[merged_trips$start_station_id_copy == "",]
+tester <- merged_trips[merged_trips$start_lat == "",]
+tester <- merged_trips[is.na(merged_trips$end_lat),]
 ```
 
 ## Merge column using ifelse
 ```{r}
 merged_trips$start_station_id_copy <- ifelse(!merged_trips$start_station_id_copy == "", merged_trips$start_station_id_copy, start_station_ids_found)
-merged_trips$start_station_id_copy <- ifelse(!merged_trips$start_station_id_copy == "", merged_trips$start_station_id_copy, start_station_ids_found)
+merged_trips$start_station_name_copy <- ifelse(!merged_trips$start_station_name_copy == "", merged_trips$start_station_name_copy, start_station_names_found)
 ```
 
 
