@@ -29,7 +29,7 @@ library(tidyverse)
 
 ```{r}
 raw_csv_folder <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\rawdata" #File path to the folder with the *.csv files
-merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210FULLvr0.2(IDs Names Geo Filled).csv" 
+merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210FULLvr1.0(IDs Names Geo Duration Filled).csv" 
 ```
 
 
@@ -73,16 +73,134 @@ merged_trips = read.csv(merged_file)
 ```
 
 # Cleaning and Transforming
-After iniitial exploratory exercise, there are a few tasks to be done before putting the data into analysis models.
+After initial exploratory exercise, there are a few tasks to be done before putting the data into analysis models.
+
+## Checking data integrity: ride_id
+First of all, all ride_id values should be unique.  If there are duplicates, then it means there were errors during data collection.  Since we have no access to the data collection process, we will have to discard the data.
+```{r}
+
+
+if (!(nrow(merged_trips[duplicated(merged_trips[,c('ride_id')]),])>0)) {
+  print("No record found with duplicate ride_id")
+} else {
+  merged_trips <- merged_trips[!duplicated(merged_trips[,c('ride_id')]),]
+}  
+
+```
+
+
+## Checking data integrity: Station names and IDs
+The number of unique station names and IDs should be an exact match.  If there are data collection errors, some station names may be sorted into the wrong station IDs.  If that's the case, then we will need to compile a list of correct staion IDs along with their names, and use it to correct the wrong entries in the main dataset. 
+
+```{r}
+# First we will check if there are rows filled with station ID, but empty station name.  And vice-versa.  
+# In this case, we have no such error.  However, if we did, then the subset can be relocated into another dataframe for processing.
+
+if (!nrow(merged_trips[((merged_trips$start_station_id == "" & merged_trips$start_station_name != "") | (merged_trips$start_station_id != "" & merged_trips$start_station_name == "")),]) >1) {
+  print("No data found with blanks in the station name/ID pair.  Safe to move on")
+}
+
+
+# The second test is done with the number of unique IDs against the number of unique names.  Those two number should match.  We will do this will a combined dataset from both start station and end station.
+#   Note that this does not guarantee that there may be cases where the number of erroneous station names is the same as the number of erroneous station  IDs.  
+#   In such cases, this test will still give a passing result. However this test is a quick first test.
+
+unique_stations <- unique(
+  rbind(
+    (data.frame(unique(merged_trips$start_station_name)) %>% 'colnames<-' (c('name'))),
+    (data.frame(unique(merged_trips$end_station_name)) %>% 'colnames<-' (c('name')))
+))
+unique_stations = data.frame(unique_stations[unique_stations != ""])
+
+unique_ids <- unique(
+  rbind(
+    (data.frame(unique(merged_trips$start_station_id)) %>% 'colnames<-' (c('name'))),
+    (data.frame(unique(merged_trips$end_station_id)) %>% 'colnames<-' (c('name')))
+))
+unique_ids = data.frame(unique_ids[unique_ids != ""])
+
+if (nrow(unique_stations) == nrow(unique_ids)) {
+  print("Number of station names match the number station IDs")
+} else {
+  print(paste("There is a mismatch of ", nrow(unique_stations) ," station names with  ", nrow(unique_ids), " station IDs.", sep=""))
+}
+
+rm(unique_stations)
+
+# Since there is a mismatch, the next step is to find all unique IDs with multiple station names.  
+# This will be stored in a separate dataframe so to be used as correction list later.
+
+work_list <- rbind(
+  (merged_trips[,c('start_station_id','start_station_name')] %>% 'colnames<-' (c('id','name'))),
+  (merged_trips[,c('end_station_id','end_station_name')] %>% 'colnames<-' (c('id','name')))
+)
+
+work_list <- work_list[(work_list$id != "" & work_list$name != ""),]
+#add_list <- (data.frame(c('13042'),c('Michigan Ave & Oak Street')) %>% 'colnames<-' (c('id','name')))
+#work_list <- rbind(work_list, add_list)
+  
+#counter <- 0
+
+correction_list <- data.frame(matrix(nrow=0, ncol=3))
+colnames(correction_list) <- c('id','name','Freq')
+weird_list <- data.frame(matrix(nrow=0, ncol=3))
+colnames(weird_list) <- c('id','name','Freq')
+for (i in 1:nrow(unique_ids)) {
+  id_to_unify <- data.frame(table(work_list[(work_list$id == unique_ids[i,]),])) %>% 'colnames<-' (c('id','name','Freq'))
+  id_to_unify <- id_to_unify[order(id_to_unify$Freq,decreasing=T),]
+  
+  if (nrow(id_to_unify)>1 & nrow(id_to_unify)<=10) {
+    # weird_list <- rbind(weird_list,id_to_unify)
+    id_to_unify <- id_to_unify[(1:1),]
+    correction_list <- rbind(correction_list,id_to_unify)
+  # } else if (nrow(id_to_unify)>10) {
+  #   weird_list <- rbind(weird_list,id_to_unify)
+    
+  # } else if (nrow(id_to_unify)>1 & id_to_unify[(1:1),'Freq']==1) {
+  #   correction_list <- rbind(correction_list,id_to_unify)
+    
+  }
+}
+
+# Clear unnecessary data
+rm(work_list)
+
+
+holding_list_name_id <- data.frame(id=merged_trips$start_station_id, name=correction_list[match(merged_trips$start_station_id, correction_list$id),2])
+#holding_list_name_id$okname <- ifelse(!is.na(holding_list_name_id$name), holding_list_name_id$name, merged_trips$start_station_name)
+holding_list_name_id$name <- coalesce(holding_list_name_id$name, merged_trips$start_station_name)
+#merged_trips$old_start_station_name <- merged_trips$start_station_name
+merged_trips$start_station_name <- holding_list_name_id$name
+       
+holding_list_name_id <- data.frame(id=merged_trips$end_station_id, name=correction_list[match(merged_trips$end_station_id, correction_list$id),2])
+#holding_list_name_id$name <- ifelse(!is.na(holding_list_name_id$name), holding_list_name_id$name, merged_trips$end_station_name)
+holding_list_name_id$name <- coalesce(holding_list_name_id$name, merged_trips$end_station_name)
+#merged_trips$old_end_station_name <- merged_trips$end_station_name
+merged_trips$end_station_name <- holding_list_name_id$name
+
+rm(holding_list_name_id, correction_list, id_to_unify)
+
+# merged_trips$end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
+# data.frame(v1=d$v1, v4=m[match(d$v2, m$v3), 2])
+# station_match = data.frame(name=station_names$name, id=stations_raw[match(station_names$name, stations_raw$name), 1])
+
+test <- data.frame(table(work_list[(work_list$id == unique_ids[1,]),]))
+
+# tester <- merged_trips[((merged_trips$end_station_id == "")),]
+```
+
 
 ## Filling in missing Station IDs
 ### Create a list of stations along with their names, IDs, and geos.
-Earlier data did not contail station IDs, but has geo-coordinate that may be used reference to later data
+Earlier data did not contain station IDs, but has geo-coordinate that may be used reference to later data
 
 First we want to generate an index of all unique station IDs with their geo-coordinates
 
 ```{r}
 # Create a vector with all unique IDs found in the start_station_id and end_station_id columns
+
+
+
 all_station_ids = sort(unique(unique(merged_trips$start_station_id), unique(merged_trips$end_station_id)))
 # Remove blank ID
 all_station_ids = all_station_ids[all_station_ids != ""]
@@ -191,6 +309,12 @@ for (i in 1:nrow(merged_trips)) {
     case <- case + 1
   }
 }
+
+# merged_trips$old_start_station_id <- merged_trips$start_station_id
+# merged_trips$new_start_station_id <- ifelse(!merged_trips$start_station_id == "", merged_trips$start_station_id, start_station_ids_found)
+# merged_trips$old_start_station_name <- merged_trips$start_station_name
+# merged_trips$new_start_station_name <- ifelse(!merged_trips$start_station_name == "", merged_trips$start_station_name, start_station_names_found)
+
 merged_trips$start_station_id <- ifelse(!merged_trips$start_station_id == "", merged_trips$start_station_id, start_station_ids_found)
 merged_trips$start_station_name <- ifelse(!merged_trips$start_station_name == "", merged_trips$start_station_name, start_station_names_found)
 
@@ -219,8 +343,20 @@ for (i in seq_len(nrow(merged_trips))) {
   }
 }
 
+# merged_trips$old_end_station_id <- merged_trips$end_station_id
+# merged_trips$new_end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
+# merged_trips$old_end_station_name <- merged_trips$end_station_name
+# merged_trips$new_end_station_name <- ifelse(!merged_trips$end_station_name == "", merged_trips$end_station_name, end_station_names_found)
+
 merged_trips$end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
 merged_trips$end_station_name <- ifelse(!merged_trips$end_station_name == "", merged_trips$end_station_name, end_station_names_found)
+
+```
+### Add a column to calculate duration of bike rental
+
+```{r}
+merged_trips$duration <- round(difftime(as.POSIXct(merged_trips$ended_at,format="%Y-%m-%d %H:%M:%S"),as.POSIXct(merged_trips$started_at,format="%Y-%m-%d %H:%M:%S"),unit="mins"),1)
+
 
 ```
 
@@ -240,6 +376,27 @@ glimpse(merged_trips)
 
 ggplot(data = merged_trips) +
   geom_bar(mapping = aes(x = rideable_type, fill=member_casual))
+
+
+start_station_usage <- data.frame(sort(table(merged_trips$start_station_name),decreasing=T))
+colnames(start_station_usage) <- c('name','freq_as_start')
+
+station_stat <- start_station_usage
+
+end_station_usage <- data.frame(sort(table(merged_trips$end_station_name),decreasing=T))
+colnames(end_station_usage) <- c('name','freq_as_end')
+
+station_stat <- unique((inner_join(station_stat, select(end_station_usage, c("name","freq_as_end")), by = c("name"))))
+
+colnames(station_stat) <- c('start_station_name','freq_as_start','freq_as_end')
+station_stat <- unique((inner_join(station_stat, select(merged_trips, c("start_station_name","start_station_id")), by = c("start_station_name"))))
+
+test <- data.frame(sort(unique(station_stat$start_station_id)))
+# df3 <- unique((inner_join(df1, select(df2, c("a","c")), by = c("a"))))
+
+
+ggplot(data = sort(table(start_station_name)) +
+  geom_bar(mapping = aes(x = )
 ```
 
 
