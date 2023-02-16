@@ -1,4 +1,6 @@
 # Bike_Share_12Month_Analysis
+Full dataset and visualization can be found here: 
+https://www.kaggle.com/code/questnode/bike-share-analysis
 
 Welcome to my case study on a 12 Month Analysis of a bike share program.  This is an unguided project based on data provided between November 2021 to October 2022. The core purpose is to find out how annual members and casual riders use the bikes differently.  
 
