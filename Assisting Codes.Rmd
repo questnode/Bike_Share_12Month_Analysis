@@ -8,7 +8,7 @@ date: "2022-12-24"
 ```{r}
 
 
-merged_trips <- subset(merged_trips, select = -c(old_end_station_name))
+merged_trips <- subset(merged_trips, select = -c(duration_new))
 
 ```
 

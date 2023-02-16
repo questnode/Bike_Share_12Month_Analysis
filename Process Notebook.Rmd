@@ -1,60 +1,55 @@
 ---
-title: "R Notebook"
+title: "Bike Share 12-Month Analysis"
 output: html_notebook
 ---
+# WELCOME
+Welcome to my case study on a 12 Month Analysis of a bike share program.  This is an unguided project based on data provided between November 2021 to October 2022. The core purpose is to find out how annual members and casual riders use the bikes differently.  
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+There are a couple constraints and challenges met while conducting the analysis.
+1. Since this an online case study, there are actually no stakeholder to inquire regarding missing or erroneous data.  Therefore, either best assumptions are made, or the data entries in question are discarded.
+2. One challenge is the quantity of data being over 5.6 Million entries of 12 observations each. The programming language R is chosen for its performance being a localized IDE and having a vectorian data structure.
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+# Prepare Environment and Dataset
+We will first load all the libraries required for this project.  Afterwards, the raw data files will be merged into a single dataframe.
 
+## Load libraries
 ```{r}
-plot(cars)
-```
-
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
-
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
-
-
-### Load Libraries
-```{r}
+# library(plyr)
 library(geosphere)
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
+library(scales)
+library(RColorBrewer)
+library(tidyr)
+library(quantreg)
+library(lubridate)
+library(patchwork)
+library(zoo)
 ```
-## Setting folder and file locations for initial data loading.
 
+## Setting folder and file path for initial data ingress
 ```{r}
 raw_csv_folder <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\rawdata" #File path to the folder with the *.csv files
 merged_file <- "C:\\Users\\rayyao\\Documents\\RStudio\\Case Study 1\\Analysis\\ETL\\tripdata_202111-202210FULLvr1.0(IDs Names Geo Duration Filled).csv" 
 ```
 
-
 ### Preloading data step #1: Process all raw csv data in a folder into one single csv file (This step can be skipped if merged_trips csv already exists and dataset is being loaded from there)
-
 ```{r}
+# load file pathes
 file_path_list <- fs::dir_ls(raw_csv_folder)
 file_name_list <- list.files(raw_csv_folder)
 
+# Create an empty dataframe
 merged_trips = data.frame()
 
-#for initial data exploration, read only first 1000 lines in each csv using nrows=1000
+# Scan and loop through all files under the folder path and combine them into the datafreame created just before
 for (i in seq_along(file_name_list)) {
-  # my_content <- read.csv(file = file_path_list[[i]], nrows=20000)
   my_content <- read.csv(file = file_path_list[[i]])
-  
   df <- data.frame(my_content)
-
   merged_trips <- rbind(merged_trips, df)
 }
-
-
-
 ```
-
 
 ### Preloading data step #2: Write the merged data to a new csv file (This step can be skipped if merged_trips csv already exists and dataset is being loaded from there)
 ```{r}
@@ -63,352 +58,708 @@ write.table(merged_trips, file = merged_file, sep = ",",
   col.names = TRUE, row.names = FALSE)
 ```
 
-
-
 ### Preloading data setp #3: Read pre-merged csv into dataframe (This step can be skipped if step #1 of preloading is ran, and merged_trips dataframe is already populated)
-
 ```{r}
-
 merged_trips = read.csv(merged_file)
 ```
 
 # Cleaning and Transforming
-After initial exploratory exercise, there are a few tasks to be done before putting the data into analysis models.
+From here on, the merged raw data shall be referred to as the "main trip dataset".  After the main trip dataset is loaded in, a quick evaluation is done using the table() and summarise() fucntions.  There seem to be data errors and inconsistencies in place.  Thus a few clean up tasks are to be done before putting the data into analysis models.
 
-## Checking data integrity: ride_id
+# Checking data integrity: ride_id
 First of all, all ride_id values should be unique.  If there are duplicates, then it means there were errors during data collection.  Since we have no access to the data collection process, we will have to discard the data.
 ```{r}
-
-
+# Using the duplicated() function, we can quickly check if there are duplicate entries
 if (!(nrow(merged_trips[duplicated(merged_trips[,c('ride_id')]),])>0)) {
   print("No record found with duplicate ride_id")
 } else {
   merged_trips <- merged_trips[!duplicated(merged_trips[,c('ride_id')]),]
 }  
-
 ```
 
-
-## Checking data integrity: Station names and IDs
-The number of unique station names and IDs should be an exact match.  If there are data collection errors, some station names may be sorted into the wrong station IDs.  If that's the case, then we will need to compile a list of correct staion IDs along with their names, and use it to correct the wrong entries in the main dataset. 
+# Checking data integrity: Station names and IDs
+The number of unique station names and IDs should be an exact match.  If there are data collection errors, some station names may be sorted into the wrong station IDs.  If that's the case, then we will need to correct it.  To do so, we can compile a list of correct station IDs along with their names, and use it as a reference table to correct the wrong entries in the main trip dataset. The test below shows we have no such error. However, if we did, then the subset can be relocated into another dataframe for processing.
 
 ```{r}
 # First we will check if there are rows filled with station ID, but empty station name.  And vice-versa.  
-# In this case, we have no such error.  However, if we did, then the subset can be relocated into another dataframe for processing.
-
 if (!nrow(merged_trips[((merged_trips$start_station_id == "" & merged_trips$start_station_name != "") | (merged_trips$start_station_id != "" & merged_trips$start_station_name == "")),]) >1) {
   print("No data found with blanks in the station name/ID pair.  Safe to move on")
 }
+```
+The second test is done with the number of unique IDs against the number of unique names.  Those two number should match.  We will do this with a combined dataset from both start station column and end station column.
+*Note* that this does not guarantee that there may be cases where the number of erroneous station names is the same as the number of erroneous station  IDs. In such cases, this test will still give a passing result. However this test is a quick first test.
 
-
-# The second test is done with the number of unique IDs against the number of unique names.  Those two number should match.  We will do this will a combined dataset from both start station and end station.
-#   Note that this does not guarantee that there may be cases where the number of erroneous station names is the same as the number of erroneous station  IDs.  
-#   In such cases, this test will still give a passing result. However this test is a quick first test.
-
+```{r}
+# Find all unique station names
 unique_stations <- unique(
   rbind(
     (data.frame(unique(merged_trips$start_station_name)) %>% 'colnames<-' (c('name'))),
     (data.frame(unique(merged_trips$end_station_name)) %>% 'colnames<-' (c('name')))
 ))
+# Remove blank station names
 unique_stations = data.frame(unique_stations[unique_stations != ""])
-
+# Find all unique station IDs
 unique_ids <- unique(
   rbind(
     (data.frame(unique(merged_trips$start_station_id)) %>% 'colnames<-' (c('name'))),
     (data.frame(unique(merged_trips$end_station_id)) %>% 'colnames<-' (c('name')))
 ))
+# Remove blank station IDs
 unique_ids = data.frame(unique_ids[unique_ids != ""])
 
+# Check if number of unique station names is the same as number of unique staion IDs
 if (nrow(unique_stations) == nrow(unique_ids)) {
   print("Number of station names match the number station IDs")
 } else {
   print(paste("There is a mismatch of ", nrow(unique_stations) ," station names with  ", nrow(unique_ids), " station IDs.", sep=""))
 }
+```
 
-rm(unique_stations)
-
-# Since there is a mismatch, the next step is to find all unique IDs with multiple station names.  
-# This will be stored in a separate dataframe so to be used as correction list later.
-
+Since there is a mismatch, the next step is to find all unique IDs with multiple station names. Eg. One ID of "123" is found to have multiple names such as "Clark", "Broadway", "Union St.", etc.
+This will be stored in a separate dataframe so to be cleaned up and used as correction reference.
+```{r}
+# Combine all station name and id entries in the main bikeshare dataset
 work_list <- rbind(
   (merged_trips[,c('start_station_id','start_station_name')] %>% 'colnames<-' (c('id','name'))),
   (merged_trips[,c('end_station_id','end_station_name')] %>% 'colnames<-' (c('id','name')))
 )
-
+# Remove blanks
 work_list <- work_list[(work_list$id != "" & work_list$name != ""),]
-#add_list <- (data.frame(c('13042'),c('Michigan Ave & Oak Street')) %>% 'colnames<-' (c('id','name')))
-#work_list <- rbind(work_list, add_list)
-  
-#counter <- 0
-
+# Create an empty list for the correct station name & ID reference to be stored.
 correction_list <- data.frame(matrix(nrow=0, ncol=3))
 colnames(correction_list) <- c('id','name','Freq')
-weird_list <- data.frame(matrix(nrow=0, ncol=3))
-colnames(weird_list) <- c('id','name','Freq')
+# Loop through the entire list of IDs.  The table() function can tell us if there are multiple names associated to one single ID.  If so, the name that occurs most frequently is used as the proper name.
 for (i in 1:nrow(unique_ids)) {
   id_to_unify <- data.frame(table(work_list[(work_list$id == unique_ids[i,]),])) %>% 'colnames<-' (c('id','name','Freq'))
   id_to_unify <- id_to_unify[order(id_to_unify$Freq,decreasing=T),]
-  
+  # Eliminate low occurrence names and add the last name cadidat to the reference list
   if (nrow(id_to_unify)>1 & nrow(id_to_unify)<=10) {
-    # weird_list <- rbind(weird_list,id_to_unify)
     id_to_unify <- id_to_unify[(1:1),]
     correction_list <- rbind(correction_list,id_to_unify)
-  # } else if (nrow(id_to_unify)>10) {
-  #   weird_list <- rbind(weird_list,id_to_unify)
-    
-  # } else if (nrow(id_to_unify)>1 & id_to_unify[(1:1),'Freq']==1) {
-  #   correction_list <- rbind(correction_list,id_to_unify)
-    
   }
 }
-
-# Clear unnecessary data
+# Clear unnecessary data to free up system resource
 rm(work_list)
+```
 
-
+Now that we have a reference list for running corrections, we will apply the correct station names to each ID in the main trip dataset that requires correction.
+```{r}
+# Apply correction to the column start_staiton_name
 holding_list_name_id <- data.frame(id=merged_trips$start_station_id, name=correction_list[match(merged_trips$start_station_id, correction_list$id),2])
-#holding_list_name_id$okname <- ifelse(!is.na(holding_list_name_id$name), holding_list_name_id$name, merged_trips$start_station_name)
 holding_list_name_id$name <- coalesce(holding_list_name_id$name, merged_trips$start_station_name)
-#merged_trips$old_start_station_name <- merged_trips$start_station_name
 merged_trips$start_station_name <- holding_list_name_id$name
-       
+# Apply correction to the column end_staiton_name
 holding_list_name_id <- data.frame(id=merged_trips$end_station_id, name=correction_list[match(merged_trips$end_station_id, correction_list$id),2])
-#holding_list_name_id$name <- ifelse(!is.na(holding_list_name_id$name), holding_list_name_id$name, merged_trips$end_station_name)
 holding_list_name_id$name <- coalesce(holding_list_name_id$name, merged_trips$end_station_name)
-#merged_trips$old_end_station_name <- merged_trips$end_station_name
 merged_trips$end_station_name <- holding_list_name_id$name
-
+# Clear unnecessary data to free up system resource
 rm(holding_list_name_id, correction_list, id_to_unify)
-
-# merged_trips$end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
-# data.frame(v1=d$v1, v4=m[match(d$v2, m$v3), 2])
-# station_match = data.frame(name=station_names$name, id=stations_raw[match(station_names$name, stations_raw$name), 1])
-
-test <- data.frame(table(work_list[(work_list$id == unique_ids[1,]),]))
-
-# tester <- merged_trips[((merged_trips$end_station_id == "")),]
 ```
 
 
-## Filling in missing Station IDs
-### Create a list of stations along with their names, IDs, and geos.
-Earlier data did not contain station IDs, but has geo-coordinate that may be used reference to later data
+# Transformation: Filling in missing Station IDs
+In our main trip dataset, there are a lot of entries with missing station IDs and names.  Thankfully, each entry contain geo-coordinates of the ride's starting and ending locations.  To fill in the missing stations, let us first create another reference list contain station IDs, names, and their geo-coordinates.  This task requires a few more intermediary steps.
 
-First we want to generate an index of all unique station IDs with their geo-coordinates
-
+## Compiling reference list station ID, Name, Latitude, Longitude
 ```{r}
 # Create a vector with all unique IDs found in the start_station_id and end_station_id columns
-
-
-
 all_station_ids = sort(unique(unique(merged_trips$start_station_id), unique(merged_trips$end_station_id)))
 # Remove blank ID
 all_station_ids = all_station_ids[all_station_ids != ""]
-
+# Create a empty dataframe to hold the reference list
 station_list <- data.frame(matrix(ncol = 4, nrow = 0))
 colnames(station_list) <- c("id","name","lng","lat")
-
+# Loop through all unique station IDs and attach to each the highest occuring geo-coordinates
 for (i in seq_along(all_station_ids)) {
-
   station_info <- (merged_trips %>% filter(start_station_id == all_station_ids[i]))[c("start_lng","start_lat","start_station_name")]
-  
   station_list[nrow(station_list) + 1,] <- c(
     all_station_ids[i],
     names(sort(table(station_info$start_station_name),decreasing=T)[1]),
     names(sort(table(station_info$start_lng),decreasing=T)[1]),
     names(sort(table(station_info$start_lat),decreasing=T)[1])
   )
-  
 }
-
+# Convert the latitude and longitude to numerics instead of strings
 station_list[,c("lng","lat")] <- sapply(station_list[,c("lng","lat")], as.numeric)
-
 ```
 
-### Mark missing start and/or end geo-coordinates
-Some records are missing start and/or end geo-coordinates.  Their station id and name shall be marked as Missing_Start_ID/Missing_End_ID and Missing_Start_Name/Missing_End_Name
-The values in the g
-
+## Mark missing start and/or end geo-coordinates
+Some records are missing start and/or end geo-coordinates.  We wil first mark their station id and name (both starting and ending) so that they can be targeted later for corrections.  
 ```{r}
-
+# Remove NA entries from the main trip dataset
 merged_trips[is.na(merged_trips)] <- ""
-
+# Convert the latitude and longitude in main trip dataset to numerics instead of strings
 merged_trips[,c("start_lat","start_lng","end_lat","end_lng")] <- sapply(merged_trips[,c("start_lat","start_lng","end_lat","end_lng")], as.numeric)
-
-
+# Mark missing entries
 merged_trips[,c("end_station_name","end_station_id")][is.na(merged_trips$end_lat) | is.na(merged_trips$end_lng),] <- "Missing Data & Geo"
 merged_trips[,c("start_station_name","start_station_id")][is.na(merged_trips$start_lat) | is.na(merged_trips$start_lng),] <- "Missing Data & Geo"
-
-
 ```
 
+## Reference missing station data with the station info generated
 
-### Reference missing station data with the station info generated
 Now that we have a full list of stations, we can use it to look up the missing data points in merged_trips.  This can be done in the following steps
-
 1. Seek along each row in mergerd_trips
-
 2. Check to see if one or more of these cells is empty: start_station_name, start_station_id, end_station_name, end_station_id
-
 3. If #2 is true, then the start/end lng/lat columns will be used. eg.
-
     If start_station_name or start_station_id is missing, then use start_lat and start_lng
-  
     If end_station_name or end_station_id is missing, then use end_lat and end_lng
-  
 4. lat and lng values from merged_trips will be compared against all lat and lng values in station_list to determine which station is the missing value.  Match is determined when the total difference of lat & lng from merged trips and lat & lng from stastion_list is the smallest out of the entire list.
-
 5. For precaution, the distance between the original geo-coordinates and the matched station will be recorded to see if there is a large deviation
 
-
+### Create a function that takes in latitude and longitude, and return the station with the closest geo-coordinate proximity
 ```{r}
 station_by_geo <- function(check_lat, check_lng) {
   # create a dictionary with two keys, one is the station ID, and the other is station name
-
   station_found <- c("id" = "", "name" = "")
-  
+  # Load the list of stations for comparison of the latitude and longitude parameters
   compare_list <- data.frame(station_list)
+  # Add a new column to store distance between each station and the geo-coordinate passed in
   compare_list <- compare_list%>%dplyr::mutate(Geo_Diff=NA)
+  # Calculate distance between each station and the geo-coordinate passed in
   compare_list[,"Geo_Diff"] <- abs(compare_list[,"lat"]-check_lat) + abs(compare_list[,"lng"]-check_lng)
-  
+  # Find the row with the minimum geo difference
   row_num = which.min(compare_list[,"Geo_Diff"])
-  
+  # Identify the station matched and return result
   station_found["id"] <- compare_list[row_num,"id"]
   station_found["name"] <- compare_list[row_num,"name"]
-
   return(station_found)
-
 }
 ```
 
-## Run search for blank station names and IDs by maching geo-coordinates
+### Run search for blank station names and IDs by maching geo-coordinates
 
 ```{r}
-# === Start Stations ===
-station_ids_found = numeric (nrow(merged_trips))
-station_names_found = numeric (nrow(merged_trips))
-
+# Create condition vector to test any blank name or ID
 condition <- (merged_trips$start_station_name == "" | merged_trips$start_station_id == "")
-
-start_station_ids_found = numeric (nrow(merged_trips))
+# Create empty containers for storing operation results
+start_station_ids_found = numeric(nrow(merged_trips))
 start_station_names_found = numeric (nrow(merged_trips))
-
-case <- 0
-
+# Loop through the length of main trip dataset to populate missing start station name and IDs in containers created
 for (i in 1:nrow(merged_trips)) {
-
-  if (i %% 10000 == 0 | i == 1) {
-    print(paste("Start Station Record # ", i ,". @ ", Sys.time(), ". Case found: ", case, sep=""))
-  }
-
   if (condition[i]) {
     station_found <- station_by_geo(merged_trips[i,"start_lat"],merged_trips[i,"start_lng"])
     start_station_ids_found[i] <- station_found["id"]
     start_station_names_found[i] <- station_found["name"]
-    
-    case <- case + 1
   }
 }
-
-# merged_trips$old_start_station_id <- merged_trips$start_station_id
-# merged_trips$new_start_station_id <- ifelse(!merged_trips$start_station_id == "", merged_trips$start_station_id, start_station_ids_found)
-# merged_trips$old_start_station_name <- merged_trips$start_station_name
-# merged_trips$new_start_station_name <- ifelse(!merged_trips$start_station_name == "", merged_trips$start_station_name, start_station_names_found)
-
+# Merged the container with filled info into the main trip dataset
 merged_trips$start_station_id <- ifelse(!merged_trips$start_station_id == "", merged_trips$start_station_id, start_station_ids_found)
 merged_trips$start_station_name <- ifelse(!merged_trips$start_station_name == "", merged_trips$start_station_name, start_station_names_found)
 
-### =========== End stations
+# Create condition vector to test any blank name or ID
+condition <- (merged_trips$end_station_name == "" | merged_trips$end_station_id == "")
+# Create empty containers for storing operation results
 end_station_ids_found = numeric (nrow(merged_trips))
 end_station_names_found = numeric (nrow(merged_trips))
-
-condition <- (merged_trips$end_station_name == "" | merged_trips$end_station_id == "")
-
-case <- 0
-
+# Loop through the length of main trip dataset to populate missing start station name and IDs in containers created
 for (i in seq_len(nrow(merged_trips))) {
-  
-  if (i %% 10000 == 0 | i == 1) {
-    print(paste("End Station Record # ", i ,". At ", Sys.time(), ". Case found: ", case, sep=""))
-    paste
-  }
-
   if (condition[i]) {
     station_found <- station_by_geo(merged_trips[i,"end_lat"],merged_trips[i,"end_lng"])
-
     end_station_ids_found[i] <- station_found["id"]
     end_station_names_found[i] <- station_found["name"]
-    
-    case <- case + 1
   }
 }
-
-# merged_trips$old_end_station_id <- merged_trips$end_station_id
-# merged_trips$new_end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
-# merged_trips$old_end_station_name <- merged_trips$end_station_name
-# merged_trips$new_end_station_name <- ifelse(!merged_trips$end_station_name == "", merged_trips$end_station_name, end_station_names_found)
-
+# Merged the container with filled info into the main trip dataset
 merged_trips$end_station_id <- ifelse(!merged_trips$end_station_id == "", merged_trips$end_station_id, end_station_ids_found)
 merged_trips$end_station_name <- ifelse(!merged_trips$end_station_name == "", merged_trips$end_station_name, end_station_names_found)
-
 ```
-### Add a column to calculate duration of bike rental
 
+
+# Transformation: Calculate duration of bike rental
+Add a column of ride duration calculated from starting and end time stamps
 ```{r}
-merged_trips$duration <- round(difftime(as.POSIXct(merged_trips$ended_at,format="%Y-%m-%d %H:%M:%S"),as.POSIXct(merged_trips$started_at,format="%Y-%m-%d %H:%M:%S"),unit="mins"),1)
-
-
+merged_trips$duration <- as.numeric(round(difftime(as.POSIXct(merged_trips$ended_at,format="%Y-%m-%d %H:%M:%S"),as.POSIXct(merged_trips$started_at,format="%Y-%m-%d %H:%M:%S"),unit="mins"),1))
 ```
 
+Looking through the durations, there is a significant subset with ultra-short durations.  For the purpose of this study, we will remove the data points that start and end at the same station 2 minutes.  These rides are likely recorded with error.  Or perhaps the customer changed his/her mind soon after checking out the bikes.  Any data with a negative ride duration should be thrown out also.
+```{r}
+merged_trips <- merged_trips[!((merged_trips$start_station_name == merged_trips$end_station_name & merged_trips$duration <= 2) | merged_trips$duration <= 0),]
+```
 
-
-### Add a column to calculate linear distance between starting and ending stations
-
+# Transformation: Calculate linear distance of bike trips
+Add a column of trip distance calculated from starting and end geo-coordinates.  
+*Note* that this is simply the linear distance between two location points.  It does not take into account of navigating street and traffic.  It also does not include any side trips taken by the rider.  
 ```{r}
 merged_trips <- merged_trips%>%dplyr::mutate(linear_distance=geosphere::distHaversine(cbind(start_lng,start_lat), cbind(end_lng,end_lat)))
 ```
 
+# Data Analysis
+With the raw data now being loaded, cleaned, and transformed.  We can now begin visual analysis. 
 
-### Testing different models
+# Analysis: Overall trip riders with Membership vs Casual
+A bar chart can be use to quickly find the count of membership riders vs casual riders
 ```{r}
-summary(merged_trips)
-glimpse(merged_trips)
-
-ggplot(data = merged_trips) +
-  geom_bar(mapping = aes(x = rideable_type, fill=member_casual))
-
-
-start_station_usage <- data.frame(sort(table(merged_trips$start_station_name),decreasing=T))
-colnames(start_station_usage) <- c('name','freq_as_start')
-
-station_stat <- start_station_usage
-
-end_station_usage <- data.frame(sort(table(merged_trips$end_station_name),decreasing=T))
-colnames(end_station_usage) <- c('name','freq_as_end')
-
-station_stat <- unique((inner_join(station_stat, select(end_station_usage, c("name","freq_as_end")), by = c("name"))))
-
-colnames(station_stat) <- c('start_station_name','freq_as_start','freq_as_end')
-station_stat <- unique((inner_join(station_stat, select(merged_trips, c("start_station_name","start_station_id")), by = c("start_station_name"))))
-
-test <- data.frame(sort(unique(station_stat$start_station_id)))
-# df3 <- unique((inner_join(df1, select(df2, c("a","c")), by = c("a"))))
-
-
-ggplot(data = sort(table(start_station_name)) +
-  geom_bar(mapping = aes(x = )
+ggplot(data = merged_trips, aes(x = member_casual)) +
+  geom_bar(mapping = aes(x=member_casual, fill=member_casual), show.legend = FALSE) +
+  stat_count(geom = "text", aes(label = format(after_stat(count),big.mark= ",")), vjust = -0.5) +
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-6)) +
+  labs(title = "Membership Rides vs Single Pay Rides", x = "Ride Type", y = "Total Count", fill="Ride Type") +
+  scale_x_discrete(labels=c("Single Pay", "Membership")) +
+  scale_fill_brewer(palette = "Set3")
 ```
 
 
 
-After initial exploration, data plan could be:
-1. casual vs member at each station
-2. casual vs member in ride distance 
-3. casual vs member in ride duration
-4. sort stations in most busy to least busy
-5. 
+# Analysis: Trip duration
+Next we will look at the mean duration of bike rides between members and casual riders
+```{r}
+ggplot(data = merged_trips, aes(x = member_casual)) +
+  geom_bar(aes(x = member_casual, y = duration, fill = member_casual), position = "dodge", stat = "summary", fun = "mean") +
+  labs(title = "Trip Durations", x = "Membership Type", y = "Time (min)") +
+  scale_fill_brewer(palette = "Set3") +
+  theme(legend.position = "none")
+```
 
-Data fixes:
-1. Fill in station names and IDs based on geo-coordinates
-2. What is docked_bike rideable_type?
+# Analysis: Trip  distance
+Next we will look at the mean distance of bike rides between members and casual riders
+```{r}
+ggplot(data = merged_trips, aes(x = member_casual)) +
+  geom_bar(aes(x = member_casual, y = linear_distance, fill = member_casual), position = "dodge", stat = "summary", fun = "mean") +
+  labs(title = "Trip Distance", x = "Membership Type", y = "Distance") +
+  scale_y_continuous(labels = unit_format(unit = "KM", scale = 1e-3)) +
+  scale_fill_brewer(palette = "Set3") +
+  theme(legend.position = "none")
+```
 
+** Overall Observation **
+From the initial graphs, we can see that the distance between the starting and ending stations is generally 2KM to 2.5KM for all riders.  However, this does not mean the rider takes farther trips before riding the bike back to the initial rental station.  The graph for duration supports this claim, which show casual riders taking much more time on their trips compared to membership riders.  As a whole, the membership riders shows roughly 50% more attence than casual riders.  This suggests that the membership riders are much more willing to taken short and frequent bike rides, while casual rider prefer to use the bike when they have a longer trip to go on.
+
+# Analysis: Membership vs Casual per station
+We have seen a quick overall analysis between membership and casual rider behaviors.  Let's go in a little deeper and look at how things may change in popular stations versus less popular stations.
+
+# Analysis: Top 10 popular starting stations
+We will first identify the 10 stations that are used the most.
+```{r}
+# Using table() function, load the count of each unique starting station in decreasing order 
+start_station_usage <- data.frame(sort(table(merged_trips$start_station_name),decreasing=T))
+colnames(start_station_usage) <- c('name','freq_as_start')
+# Plot graph
+ggplot(data = start_station_usage[(1:10),], mapping = aes(x = name, y =freq_as_start)) +
+  geom_bar(stat='identity', aes(fill=name))+
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Top 10 Rental Stations", y = "Rentals Over 12 Month") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6), axis.title.x=element_blank()) +
+  theme(legend.position = "none")
+```
+
+
+# Analysis: Top 5 ending station from the top 10 starting stations
+It may also be interesting to see where the riders are going at each of the top 10 rental stations.
+```{r}
+# Load the top 10 station data
+top_start_stations_10 <- data.frame(start_station_usage[(1:10),])
+# Loop through the top 10 stations and find each of their top 5 end stations
+for (i in 1:nrow(top_start_stations_10)) {
+  # Find all trip record matching the current station name in loop
+  chart_data <- merged_trips[(merged_trips$start_station_name == top_start_stations_10[i,"name"]),]
+  # Sort the trip record and do count of end staion using summarise(), then keep only the top 5 in descending order
+  chart_data <- chart_data %>% group_by(end_station_name) %>%
+  summarise(count = n()) %>%
+  top_n(n = 5, wt = count) %>%
+  arrange(-count)
+  # Assign levels to the station names
+  chart_data$end_station_name <- factor(chart_data$end_station_name, levels=chart_data$end_station_name)
+  # Plot graph
+  print(
+    # ggplot(data=chart_data, mapping = aes(x=reorder(end_station_name, -count),y=count)) +
+    ggplot(data=chart_data, mapping = aes(x=end_station_name,y=count)) +
+    geom_bar(stat='identity', aes(fill=end_station_name)) +
+    scale_fill_brewer(palette = "Set3") +
+    # theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+    theme(legend.position = "bottom", axis.text.x=element_blank(), axis.title.x = element_blank()) +
+    labs(title = (top_start_stations_10[i,"name"]), x = "End Stations", y = "Count", fill="End Stations") +
+    guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+    #guides(fill=guide_legend(nrow=1))
+  )
+}
+```
+** Observation **
+Most trips seem to end at the same starting location, with the exception of station #4, DuSable Lake Shore Dr & North Blvd, where the top two ending station is a close tie between itself and station #1, Streeter Dr & Grand Ave.
+
+The #1 station, Streeter Dr & Grand Ave., is a very popular station.  It ranks first as the ending station for both itself and station #4, DuSable Lake Shore Dr & North Blvd.  It also ranks second in three other stations, and fourth in one other.  
+
+It is also interesting to note that the prominence of ending stations is either
+1. Strongly greater than other less prominent ending stations by factor of multiples, or
+2. Evenly frequent as other ending stations
+Scenario #1 above may suggest that such station is a very busy location with high level of activities.  Whereas scenario #2 may suggest that there is a cluster of community.
+
+# Analysis: Membership ratio in each top 10 starting stations
+Next we will look at membership rides versus casual ride for each of the top 10 stations
+```{r}
+# Load all trip records into a dataframe, grouped by starting stations, then calculated into percentage
+# detach("package:plyr", unload=TRUE) 
+chart_data <- merged_trips[(merged_trips$start_station_name %in% (start_station_usage[(1:10),"name"])),] %>%
+  dplyr::group_by(start_station_name) %>% 
+  dplyr::count(start_station_name, member_casual) %>% 
+  mutate(percent = n/sum(n)) %>% 
+  dplyr::select(-n) %>% 
+  spread(member_casual, percent)
+chart_data <- chart_data %>% relocate(member) %>% relocate(start_station_name)
+# Order datat from highest member percentage to lowest
+chart_data <- chart_data %>% arrange(-member)
+# Set factor level
+chart_data$start_station_name <- fct_reorder(chart_data$start_station_name, chart_data$member)
+# Turn dataframe from wide to long 
+chart_data <- gather(chart_data, membership, portion, member:casual, factor_key=FALSE)
+# Set membership column as factors with levels
+chart_data$membership <- fct(chart_data$membership, levels = c('member', 'casual'))
+# Plot graph
+ggplot(data=chart_data, mapping=aes(fill=membership, x=start_station_name, y=portion)) +
+  geom_bar(position=position_fill(reverse = TRUE), stat='identity') +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+  geom_text(data = (chart_data[chart_data$membership == "member",]), mapping=aes(label=scales::percent(portion, accuracy = 0.1L)), vjust=0, hjust = 1.2)  +
+  labs(title = "Membership Ratio of Top 10 Stations", x = "Member vs. Casual", y = "Station", fill="Membership Type") +
+  scale_fill_brewer(palette = "Set3") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+# library(plyr)
+```
+** Observation **
+We do not see strong correlation between membership percentage and station usage.  Eg, the top 2 popular stations exhibit 22.8% and 83.9% membership rentals.  However, this also means the top ranked station, Streeter Dr & Grand Ave, has very high potential to have its casual riders converted to members.  For marketing, these popular stations with low membership riders should be targeted.
+
+# Activity level during different times
+Here we will look at time as a factor of ridership.  
+
+# Analysis: Durations
+Since we are interested in converting casual riders to members, we will look at how each group behaves differently in terms of duration of their rides.
+We will first look at the overall distributions all ride durations. The two axes are scaled in log10 to better visualize the sample quantities.
+```{r}
+chart_data <- merged_trips[, c('member_casual', 'duration')]
+ggplot(data=chart_data, mapping=aes(x=duration)) +
+  geom_histogram(bins = 80, alpha=0.5, fill="#69b3a2", color="#e9ecef") +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x), labels = trans_format("log10", math_format(10^.x))) +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x), labels = trans_format("log10", math_format(10^.x))) +
+labs(title = "Trip Duration Distribution", x = "Duration (min)", y = "Count")
+```
+
+The histograms shows there's a very wide distribution of ride durations.  The greater most of the rides are somewhere between 10^0.25 and 10^2 (note the log scale of the graph).  To get a better boundary of the range, we will conduct some statistical calculations aiming for a subset of 95% quantile.  A boxplot would be ideal to represent the median and the spread of data.  However, since default boxplot only shows quantiles at 25% and 75%, we would need a customized boxplot to show quantiles between 2.5% and 97.5%.  The code below will give us a function for this purpose.
+
+
+```{r}
+# modified from https://github.com/tidyverse/ggplot2/blob/master/R/stat-boxplot.r
+# now takes qs argument instead of coef to extend the whiskers to a specific 
+# percentile
+
+library(ggplot2)
+
+stat_boxplot_custom <- function(mapping = NULL, data = NULL,
+                         geom = "boxplot", position = "dodge",
+                         ...,
+                         qs = c(.05, .25, 0.5, 0.75, 0.95),
+                         na.rm = FALSE,
+                         show.legend = NA,
+                         inherit.aes = TRUE) {
+  layer(
+    data = data,
+    mapping = mapping,
+    stat = StatBoxplotCustom,
+    geom = geom,
+    position = position,
+    show.legend = show.legend,
+    inherit.aes = inherit.aes,
+    params = list(
+      na.rm = na.rm,
+      qs = qs,
+      ...
+    )
+  )
+}
+
+StatBoxplotCustom <- ggproto("StatBoxplotCustom", Stat,
+  required_aes = c("x", "y"),
+  non_missing_aes = "weight",
+  
+  setup_params = function(data, params) {
+    params$width <- ggplot2:::"%||%"(params$width, (resolution(data$x) * 0.75))
+    
+    if (is.double(data$x) && !ggplot2:::has_groups(data) && any(data$x != data$x[1L])) {
+      warning(
+        "Continuous x aesthetic -- did you forget aes(group=...)?",
+        call. = FALSE)
+    }
+    
+    params
+  },
+  
+  compute_group = function(data, scales, width = NULL, na.rm = FALSE, qs = c(.05, .25, 0.5, 0.75, 0.95)) {
+    
+    if (!is.null(data$weight)) {
+      mod <- quantreg::rq(y ~ 1, weights = weight, data = data, tau = qs)
+      stats <- as.numeric(stats::coef(mod))
+    } else {
+      stats <- as.numeric(stats::quantile(data$y, qs))
+    }
+    names(stats) <- c("ymin", "lower", "middle", "upper", "ymax")
+    iqr <- diff(stats[c(2, 4)])
+    
+    outliers <- (data$y < stats[1]) | (data$y > stats[5])
+    #if (any(outliers)) {
+    #  stats[c(1, 5)] <- range(c(stats[2:4], data$y[!outliers]), na.rm = TRUE)
+    #}
+    
+    if (length(unique(data$x)) > 1)
+      width <- diff(range(data$x)) * 0.9
+    
+    df <- as.data.frame(as.list(stats))
+    df$outliers <- list(data$y[outliers])
+    
+    if (is.null(data$weight)) {
+      n <- sum(!is.na(data$y))
+    } else {
+      # Sum up weights for non-NA positions of y and weight
+      n <- sum(data$weight[!is.na(data$y) & !is.na(data$weight)])
+    }
+    
+    df$notchupper <- df$middle + 1.58 * iqr / sqrt(n)
+    df$notchlower <- df$middle - 1.58 * iqr / sqrt(n)
+    
+    df$x <- if (is.factor(data$x)) data$x[1] else mean(range(data$x))
+    df$width <- width
+    df$relvarwidth <- sqrt(n)
+    df
+  }
+)
+```
+
+Now that we have the cusomized boxplot function set up, we can plot the graph with 2.5% and 97.5% lower and upper quantiles.
+```{r}
+# Set quantile points
+qlow <- 0.025
+qhigh <- 0.975
+# Load data and group by membership
+chart_data <- chart_data %>% group_by(member_casual)
+# Calculate dateset median, lower quantile, and higher quantile
+chart_data.median <- summarise(group_by(chart_data, member_casual), median = median(duration))
+chart_data.qlow<- summarise(group_by(chart_data, member_casual), Q_low = quantile(duration, qlow))
+chart_data.qhigh<- summarise(group_by(chart_data, member_casual), Q_high = quantile(duration, qhigh))
+# Plot graph
+ggplot(data=chart_data, mapping=aes(x=member_casual, y=duration)) +
+  stat_boxplot_custom(qs=c(0, qlow, 0.5, qhigh, 1), fill="#69b3a2") +
+  # coord_trans( y="log2")
+  scale_y_continuous(trans='log10')+
+  geom_point(data=chart_data.median, mapping=aes(x=member_casual, y=median)) + 
+  geom_text(data=chart_data.median, mapping=aes(x=member_casual, y=median, label=median, vjust = -0.5, hjust = 1.5))+
+  geom_point(data=chart_data.qlow, mapping=aes(x=member_casual, y=Q_low)) + 
+  geom_text(data=chart_data.qlow, mapping=aes(x=member_casual, y=Q_low, label=Q_low, vjust = -0.5, hjust = 1.5))+
+  geom_point(data=chart_data.qhigh, mapping=aes(x=member_casual, y=Q_high)) + 
+  geom_text(data=chart_data.qhigh, mapping=aes(x=member_casual, y=Q_high, label=Q_high, vjust = -0.5, hjust = 1.5)) +
+  labs(title = "Trip Duration Statistics", y = "Duration (min)") +
+  theme(axis.title.x = element_blank())
+```
+
+# Analysis: Time of day
+Here we will look at how member and casual riders choose when to start their trip
+```{r}
+# Load trip starting time and membership into a new dataset
+time <- data.frame(merged_trips[c('started_at', 'member_casual')]) %>% 'colnames<-' (c('start_time','membership'))
+# Convert start time into hour of day in a new column
+time$hours <- hour(time$start_time)
+# Calculate mean of each membership group for plotting
+# mu <- ddply(time, "membership", summarise, grp.mean=mean(hours))
+mu <- data.frame(c('member','casual'),  c(mean(time[time$membership == "member",]$hours), mean(time[time$membership == "casual",]$hours))) %>% 'colnames<-' (c('membership','mean'))
+# Plot graph
+ggplot(data=time, mapping=aes(x = hours, fill=membership)) +
+  geom_histogram(bins=24, position="dodge") +
+  geom_vline(data=mu, aes(xintercept=mean, color=membership), linetype="dashed")+
+  scale_y_continuous(breaks = seq(0, 600000, 50000), labels = unit_format(unit = "K", scale = 1e-3)) +
+  scale_x_continuous(breaks = seq(0, 24, 1)) +
+  scale_fill_brewer(palette = "Set2")+
+  scale_color_brewer(palette = "Set2")+
+  labs(title = "Trips Taken Throughout Each Hour of Day", y = "Count", x= "Hour during the day") +
+  theme(legend.position = "bottom") 
+```
+
+# Analysis: Day of week
+We can see that the busiest hour start from 5pm (17hr).  Let's break it down further into weekdays and see if there is any change between each day.  And of course we are also interested in the difference between member and casual riders.
+```{r}
+# Create a new column that shows the day of the week
+time$weekday <- as.factor(wday(time$start_time, label=TRUE)) %>% factor(levels=c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+# Plot graph again with detailed weekday separations
+ggplot(data=time, mapping=aes(x = hours, fill=weekday)) +
+  geom_bar(position="stack") +
+  scale_y_continuous(breaks = seq(0, 600000, 50000), labels = unit_format(unit = "K", scale = 1e-3)) +
+  scale_x_continuous(breaks = seq(0, 24, 1)) +
+  facet_wrap(~membership) +
+  theme(legend.position = "bottom") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Trips Taken Throughout Each Hour of Day for each Weekday", y = "Count", x= "Hour during the day", fill="Weekdays") 
+
+```
+Overall the trend is very similar throughout the week between members and casual riders.  However, in the members group, there is an increased ridership between the hours of 7 and 9 during weekdays.  This suggests that members will utilize the bikes as commute transportation to and from workplaces, whereas casual riders will rent the bikes after work.  As well, we can see that casual riders tend to use the bikes more during weekend, whereas the members ride more during weekdays.
+
+# Analysis: Months of year
+Next we can check out how the two groups of riders behave different in different month.
+```{r}
+# Add a month column in the dataset
+time$month <- as.factor(month(time$start_time))
+# Plot graph
+ggplot(data=time, mapping=aes(x=month)) +
+  geom_bar(fill="#69b3a2", color="#e9ecef")+
+  scale_y_continuous(breaks = seq(0, 600000, 50000), labels = unit_format(unit = "K", scale = 1e-3)) +
+  facet_wrap(~membership) +
+  theme(legend.position = "bottom") +
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "Trips Taken Throughout Each Month", y = "Count", x= "Month") 
+```
+Ridership is definitely seasonal, with the summer season being the busiest of course.  However, this is more so for casual riders.  We can see a sharper peak in ride distribution over the 12 months.  Those with a membership show much stronger attendance during the off-seasons compared to casual riders.  In colder months from October to April, there are 2 to 3 times as many membership riders compared to casual riders.  
+
+# Trends
+In marketing, it is very important to understand what has worked in the past.  The same strategies can be employed from history, or new ideas can be generated based on these foundations.  Therefore, we shall conduct some trend analysis on a few relevant metric.
+
+# Analysis: Top & botthom 10 stations growing in ridership 
+There are 1308 unique rental stations.  We have seen which ones are the top 10 busiest.  Here we will see which 10 has highest growth over the past 12 months in detailed trends. We will also identify the best growing stations in terms of membership, as well as the least.  Marketing team can then look at what had happened to these stations in order to implement a sound strategy.
+
+## Compile and Transform data
+We need to first compile a dataset with relevant datapoints from the main trip dataset
+```{r}
+# Compile a list of all unique stations
+all_stations <- unique(
+  rbind(
+    (data.frame(unique(merged_trips$start_station_name)) %>% 'colnames<-' (c('name'))),
+    (data.frame(unique(merged_trips$end_station_name)) %>% 'colnames<-' (c('name')))
+))
+all_stations = data.frame(all_stations[all_stations != ""]) %>% 'colnames<-' (c('station'))
+# Create empty columns to be filled
+all_stations$earliest <- NA
+all_stations$latest <- NA
+all_stations$earliest_members <- NA
+all_stations$earliest_casuals <- NA
+all_stations$earliest_total_rides <- NA
+all_stations$latest_members <- NA
+all_stations$latest_casuals <- NA
+all_stations$latest_total_rides <- NA
+# Loop through all stations and calcualte stats required to fill in the columns
+# We are interested in figuring out the operational month of each station, and the member/casual rides in the starting and ending months
+for (i in 1:nrow(all_stations)) {
+  # Load in the relevant trip data for the current starting station in loop
+  subset <- data.frame(merged_trips[merged_trips$start_station_name == all_stations[i,'station'],c('member_casual', 'started_at')]) %>% 'colnames<-' (c('membership','started_at'))
+  # Transform timestamp into just year-month in the new column, allowing us to work from month to month
+  subset$started_at <- format(as_datetime(subset$started_at),"%Y-%m")
+  # Calculate the earliest and latest month we see the station in use in our dataset (there may be newly established stations in our sample)
+  all_stations[i,'earliest'] <- min(subset$started_at)
+  all_stations[i,'latest'] <- max(subset$started_at)
+  # Calculate member and casual rentals during the earliest month on record
+  all_stations[i,'earliest_members'] <- nrow(subset[subset$membership == "member" & subset$started_at == all_stations[i,'earliest'],])
+  all_stations[i,'earliest_casuals'] <- nrow(subset[subset$membership == "casual" & subset$started_at == all_stations[i,'earliest'],])
+  all_stations$earliest_total_rides[i] <- all_stations$earliest_members[i] + all_stations$earliest_casuals[i]
+  # Calculate member and casual rentals during the latest  month on record
+  all_stations[i,'latest_members'] <- nrow(subset[subset$membership == "member" & subset$started_at == all_stations[i,'latest'],])
+  all_stations[i,'latest_casuals'] <- nrow(subset[subset$membership == "casual" & subset$started_at == all_stations[i,'latest'],])
+  all_stations$latest_total_rides[i] <- all_stations$latest_members[i] + all_stations$latest_casuals[i]
+}
+# remove rows with NA
+all_stations <- all_stations %>% drop_na()
+# Further calculate the growth for each station in terms of overall growth, percentage, monthly growth, and monthly percentage
+all_stations$growth <- all_stations$latest_total_rides - all_stations$earliest_total_rides
+all_stations$growth_percent <- all_stations$growth / all_stations$earliest_total_rides
+all_stations$mo_live <- (as.yearmon(all_stations$latest) - as.yearmon(all_stations$earliest) + 1/12) * 12
+all_stations$growth_monthly <- round(all_stations$growth / all_stations$mo_live, digits = 0)
+all_stations$growth_monthly_percent <- all_stations$growth_monthly/ (all_stations$latest_total_rides - all_stations$growth_monthly)
+```
+
+# Analysis: Top 10 growing stations
+We now have the growth stats for each individual station.  Let's take a look at the 10 best growing stations.
+```{r}
+# Load in the top 10 stations and order by their growth in the 12 months period
+Top10Stations <- (all_stations[order(all_stations$growth_monthly, decreasing = T),])[(1:10),]
+Top10Stations$station <- fct_reorder(Top10Stations$station, Top10Stations$growth_monthly, .desc=TRUE)
+# Create graph for growth count
+Top10Growth <- ggplot(data=Top10Stations, mapping=aes(x=station, y=growth_monthly, fill=factor(0))) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  scale_fill_brewer(palette = "Set2")+
+  scale_color_brewer(palette = "Set2")+
+  theme(legend.position = "none", axis.title.x = element_blank())+
+  labs(title = "Overall Growth in Ridership", y = "Count") 
+# Create graph for growth percentage
+Top10Percent <- ggplot(data=Top10Stations, mapping=aes(x=station,y=growth_monthly_percent, color=factor(0)))+
+  geom_line(group = 1, size=1) +
+  scale_y_continuous(labels = scales::percent)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  scale_fill_brewer(palette = "Set2")+
+  scale_color_brewer(palette = "Set2")+
+  theme(legend.position = "none", axis.title.x = element_blank())+
+  labs(title = "Overall Growth in Ridership", y = "Percentage") 
+# Display growth count and percentage side by side
+Top10Growth + Top10Percent
+```
+
+# Analysis: 10 worst growing staions
+We will do the same study for the worst growing stations.  In fact these are stations decreasing in their ridership.
+```{r}
+# Load in the bottom 10 stations and order by their growth in the 12 months period
+Bottom10Stations <- (all_stations[order(all_stations$growth_monthly, decreasing = F),])[(1:10),]
+Bottom10Stations$station <- fct_reorder(Bottom10Stations$station, Bottom10Stations$growth_monthly, .desc=FALSE)
+# Create graph for growth count
+Bottom10Growth <- ggplot(data=Bottom10Stations, mapping=aes(x=station, y=growth_monthly, fill=factor(0))) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  scale_fill_brewer(palette = "Set2")+
+  scale_color_brewer(palette = "Set2")+
+  theme(legend.position = "none", axis.title.x = element_blank())+
+  labs(title = "Overall Growth in Ridership", y = "Count") 
+# Create graph for growth percentage
+Bottom10Percent <- ggplot(data=Bottom10Stations, mapping=aes(x=station,y=growth_monthly_percent, color=factor(0)))+
+  geom_line(group = 1, size=1) +
+  scale_y_continuous(labels = scales::percent)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  scale_fill_brewer(palette = "Set2")+
+  scale_color_brewer(palette = "Set2")+
+  theme(legend.position = "none", axis.title.x = element_blank())+
+  labs(title = "Overall Growth in Ridership", y = "Percentage") 
+# Display growth count and percentage side by side
+Bottom10Growth + Bottom10Percent
+```
+# Analysis: Month-by-Month growth of top 10 stations
+Let's further dive into each of the top 10 growing stations month by month so that we can correlate the growth to any sales or marketing event.
+```{r}
+# Go through the top 10 stations and plot out their growth over the 12 months
+for (i in 1:nrow(Top10Stations)) {
+  # Load in relevant data for the current station in loop
+  TopStation <- merged_trips[merged_trips$start_station_name == Top10Stations[i,c('station')],c('member_casual', 'started_at', 'rideable_type')] %>% 'colnames<-' (c('membership','started_at','bike_type'))
+  # Format the timestamp into year-month so that we can graph the counts from month to month
+  TopStation$started_at <- format(as_datetime(TopStation$started_at),"%Y-%m")
+  # Plot graph
+  graph <- ggplot(data=TopStation, mapping=aes(x=started_at, color=membership, group=interaction(membership))) +
+    geom_line(stat='count', linewidth=1) +
+    theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+    theme(legend.position = "bottom")+
+    scale_fill_brewer(palette = "Set2")+
+    scale_color_brewer(palette = "Set2")+
+    # theme(legend.position = "none") +
+    labs(title = paste("12-Month Growth for Station: ",Top10Stations$station[i],sep=""), y = "Count", x = "Year-Month", color="Membership Type") 
+  print(graph)
+}
+```
+# Analysis: Effect of bike type on membership growth
+One factor influencing people's willingness to ride might be electric bikes.  So see if there's any correlation, we can plot the use of electric bikes and classic bike along with count of membership types.  
+```{r}
+# Go through the top 10 stations and plot out their growth over the 12 months
+for (i in 1:nrow(Top10Stations)) {
+  # Load in relevant data for the current station in loop
+  TopStation <- merged_trips[merged_trips$start_station_name == Top10Stations[i,c('station')]  & merged_trips$rideable_type != "docked_bike" ,c('started_at', 'member_casual', 'rideable_type')] %>% 'colnames<-' (c('started_at','membership','bike_type'))
+  # Turn dataframe from wide to long 
+  level <- c(unique(TopStation$membership),unique(TopStation$bike_type))
+  TopStation <- rbind(TopStation[,c('started_at','membership')] %>% 'colnames<-' (c('started_at','Type')),
+                      TopStation[,c('started_at','bike_type')]%>% 'colnames<-' (c('started_at','Type')))
+  TopStation$Type <- factor(TopStation$Type,levels = level)
+  # Format the timestamp into year-month so that we can graph the counts from month to month
+  TopStation$started_at <- format(as_datetime(TopStation$started_at),"%Y-%m")
+  # Plot graph
+  graph <- ggplot(data=TopStation, mapping=aes(x=started_at, color=Type, group=interaction(Type))) +
+    geom_line(stat='count', linewidth=1) +
+    # geom_line(stat='count', mapping=aes(x=started_at, color=membership, group=interaction(membership)))+
+    theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+    theme(legend.position = "bottom")+
+    scale_fill_brewer(palette = "Set2")+
+    scale_color_brewer(palette = "Set2")+
+    # theme(legend.position = "none") +
+    labs(title = paste("12-Month Growth for Station: ",Top10Stations$station[i],sep=""), y = "Count", x = "Year-Month", color="Membership Type") 
+  print(graph)
+}
+```
+** Obeservation **
+We wanted to see if there is any correlation between a station's growth and the use of electric bikes.  However, there seem to be none.  At different stations, the number of trips with electric bikes can correlate to growth in members, or casual riders, or both.  Perhaps the quantity and availability of electric bikes is a factor.  However that data is currently not present.  
+*Note* that there is a subset of data with bike type being "Docked".  This subset is removed.  Hence the summation of members and casual riders is not the exact same as the summation of classic and electric bikes.
